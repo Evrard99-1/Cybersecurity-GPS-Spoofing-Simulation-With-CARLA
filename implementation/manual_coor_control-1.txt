@@ -1,0 +1,87 @@
+# %%
+import carla
+import random
+import time
+
+# %%
+# Connect to CARLA client
+client = carla.Client('localhost', 2000)
+client.set_timeout(10.0)
+world = client.get_world()
+
+# %%
+# Get blueprints and spawn points
+bp_lib = world.get_blueprint_library()
+spawn_points = world.get_map().get_spawn_points()
+
+# %%
+# Spawn the vehicle
+vehicle_bp = bp_lib.find('vehicle.lincoln.mkz_2020')
+vehicle = world.try_spawn_actor(vehicle_bp, random.choice(spawn_points))
+
+# %%
+# Set spectator view
+spectator = world.get_spectator()
+transform = carla.Transform(vehicle.get_transform().transform(carla.Location(x=-4, z=2.5)), vehicle.get_transform().rotation)
+spectator.set_transform(transform)
+
+# %%
+# Spawn RGB camera
+camera_bp = bp_lib.find('sensor.camera.rgb')
+camera_init_trans = carla.Transform(carla.Location(z=2))
+camera = world.spawn_actor(camera_bp, camera_init_trans, attach_to=vehicle)
+
+# Start camera saving data
+camera.listen(lambda image: image.save_to_disk('out/%06d.png' % image.frame))
+
+# %%
+# Real-time coordinate-based control function
+def drive_to_coordinate(vehicle, destination, speed=10):
+    control = carla.VehicleControl()
+
+    while True:
+        vehicle_loc = vehicle.get_location()
+        destination_loc = carla.Location(x=destination[0], y=destination[1], z=vehicle_loc.z)
+
+        # Calculate the direction vector
+        direction = destination_loc - vehicle_loc
+        distance = direction.length()
+
+        # Stop condition
+        if distance < 1:
+            control.throttle = 0
+            control.brake = 1
+            vehicle.apply_control(control)
+            break
+
+        direction = direction.make_unit_vector()
+
+        yaw = vehicle.get_transform().rotation.yaw
+        vehicle_forward = carla.Vector3D(x=math.cos(math.radians(yaw)), y=math.sin(math.radians(yaw)))
+
+        dot_product = direction.x * vehicle_forward.x + direction.y * vehicle_forward.y
+        cross_product = vehicle_forward.x * direction.y - vehicle_forward.y * direction.x
+
+        # Basic steering and throttle
+        control.throttle = min(speed / 30, 1.0)
+        control.steer = cross_product
+        control.brake = 0
+
+        vehicle.apply_control(control)
+
+        # Update spectator position
+        transform = carla.Transform(vehicle.get_transform().transform(carla.Location(x=-6, z=3)), vehicle.get_transform().rotation)
+        spectator.set_transform(transform)
+
+        time.sleep(0.05)
+
+# %%
+# Example destination coordinates
+destination = [230, 195]
+drive_to_coordinate(vehicle, destination)
+
+# %%
+# Cleanup
+camera.stop()
+vehicle.destroy()
+camera.destroy()
